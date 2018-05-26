@@ -1,6 +1,6 @@
 package org.apache.spark.ml.regression
 
-import breeze.linalg.{inv, logdet, sum, DenseMatrix => BDM, DenseVector => BDV, _}
+import breeze.linalg.{inv, logdet, DenseMatrix => BDM, DenseVector => BDV, _}
 import breeze.optimize.{DiffFunction, LBFGSB}
 import org.apache.spark.internal.Logging
 import org.apache.spark.ml.PredictorParams
@@ -16,34 +16,52 @@ import org.apache.spark.sql.{Dataset, Row}
 
 import scala.collection.mutable
 
-private[regression] trait GaussianProcessRegressionParams extends PredictorParams
-  with HasMaxIter with HasTol with HasAggregationDepth with HasSeed {
+private[regression] trait GaussianProcessRegressionParams
+    extends PredictorParams
+    with HasMaxIter
+    with HasTol
+    with HasAggregationDepth
+    with HasSeed {
 
-  final val activeSetProvider = new Param[ActiveSetProvider](this, "activeSetProvider",
+  final val activeSetProvider = new Param[ActiveSetProvider](
+    this,
+    "activeSetProvider",
     "the class which provides the active set used by Projected Process Approximation")
 
-  final val kernel = new Param[() => Kernel](this,
-    "kernel", "function of no arguments which returns " +
+  final val kernel = new Param[() => Kernel](
+    this,
+    "kernel",
+    "function of no arguments which returns " +
       "the kernel of the prior Gaussian Process")
 
-  final val datasetSizeForExpert = new IntParam(this,
-    "datasetSizeForExpert", "The number of data points fed to each expert. " +
+  final val datasetSizeForExpert = new IntParam(
+    this,
+    "datasetSizeForExpert",
+    "The number of data points fed to each expert. " +
       "Time and space complexity of training quadratically grows with it.")
 
-  final val sigma2 = new DoubleParam(this,
-    "sigma2", "The variance of noise in the inputs. The value is added to the diagonal of the " +
+  final val sigma2 = new DoubleParam(
+    this,
+    "sigma2",
+    "The variance of noise in the inputs. The value is added to the diagonal of the " +
       "kernel Matrix. Also prevents numerical issues associated with inversion " +
-      "of a computationally singular matrix ")
+      "of a computationally singular matrix "
+  )
 
-  final val activeSetSize = new IntParam(this,
-    "activeSetSize", "Number of latent functions to project the process onto. " +
+  final val activeSetSize = new IntParam(
+    this,
+    "activeSetSize",
+    "Number of latent functions to project the process onto. " +
       "The size of the produced model and prediction complexity " +
-      "linearly depend on this value.")
+      "linearly depend on this value."
+  )
 
-  def setActiveSetProvider(value : ActiveSetProvider): this.type = set(activeSetProvider, value)
+  def setActiveSetProvider(value: ActiveSetProvider): this.type =
+    set(activeSetProvider, value)
   setDefault(activeSetProvider -> RandomActiveSetProvider)
 
-  def setDatasetSizeForExpert(value: Int): this.type = set(datasetSizeForExpert, value)
+  def setDatasetSizeForExpert(value: Int): this.type =
+    set(datasetSizeForExpert, value)
   setDefault(datasetSizeForExpert -> 100)
 
   def setMaxIter(value: Int): this.type = set(maxIter, value)
@@ -85,44 +103,67 @@ private[regression] trait GaussianProcessRegressionParams extends PredictorParam
   *
   */
 class GaussianProcessRegression(override val uid: String)
-  extends Regressor[Vector, GaussianProcessRegression, GaussianProcessRegressionModel]
-    with GaussianProcessRegressionParams with GaussianProcessRegressionHelper with Logging {
+    extends Regressor[Vector,
+                      GaussianProcessRegression,
+                      GaussianProcessRegressionModel]
+    with GaussianProcessRegressionParams
+    with GaussianProcessRegressionHelper
+    with Logging {
 
   def this() = this(Identifiable.randomUID("gaussProcessReg"))
 
-  override protected def train(dataset: Dataset[_]): GaussianProcessRegressionModel = {
+  override protected def train(
+      dataset: Dataset[_]): GaussianProcessRegressionModel = {
     val instr = Instrumentation.create(this, dataset)
 
     val points: RDD[LabeledPoint] = getPoints(dataset).cache()
 
-    val expertLabelsAndKernels: RDD[(BDV[Double], Kernel)] = groupForExperts(points).map { chunk =>
-      val (labels, trainingVectors) = chunk.map(lp => (lp.label, lp.features)).toArray.unzip
-      (BDV(labels: _*), $(kernel)().setTrainingVectors(trainingVectors))
-    }.cache()
+    val expertLabelsAndKernels: RDD[(BDV[Double], Kernel)] =
+      groupForExperts(points)
+        .map { chunk =>
+          val (labels, trainingVectors) =
+            chunk.map(lp => (lp.label, lp.features)).toArray.unzip
+          (BDV(labels: _*), $(kernel)().setTrainingVectors(trainingVectors))
+        }
+        .cache()
 
     instr.log("Optimising the kernel hyperparameters")
-    val optimalHyperparameters = optimizeHyperparameters(expertLabelsAndKernels, $(sigma2))
-    instr.log("Optimal hyperparameter values: " + optimalHyperparameters )
+    val optimalHyperparameters =
+      optimizeHyperparameters(expertLabelsAndKernels, $(sigma2))
+    instr.log("Optimal hyperparameter values: " + optimalHyperparameters)
 
-    expertLabelsAndKernels.foreach(_._2.setHyperparameters(optimalHyperparameters))
+    expertLabelsAndKernels.foreach(
+      _._2.setHyperparameters(optimalHyperparameters))
 
-    val activeSet = $(activeSetProvider)($(activeSetSize), expertLabelsAndKernels, points,
-      $(kernel), optimalHyperparameters, $(sigma2), $(seed))
+    val activeSet = $(activeSetProvider)($(activeSetSize),
+                                         expertLabelsAndKernels,
+                                         points,
+                                         $(kernel),
+                                         optimalHyperparameters,
+                                         $(sigma2),
+                                         $(seed))
 
     points.unpersist()
 
-    val (matrixKmnKnm, vectorKmny) = getMatrixKmnKnmAndVectorKmny(expertLabelsAndKernels, activeSet)
+    val (matrixKmnKnm, vectorKmny) =
+      getMatrixKmnKnmAndVectorKmny(expertLabelsAndKernels, activeSet)
 
     expertLabelsAndKernels.unpersist()
 
-    val optimalKernel = $(kernel)().setTrainingVectors(activeSet)
+    val optimalKernel = $(kernel)()
+      .setTrainingVectors(activeSet)
       .setHyperparameters(optimalHyperparameters)
 
     // inv(sigma^2 K_mm + K_mn * K_nm) * K_mn * y
-    val magicVector = getMagicVector(optimalKernel, $(sigma2),
-      matrixKmnKnm, vectorKmny, activeSet, optimalHyperparameters)
+    val magicVector = getMagicVector(optimalKernel,
+                                     $(sigma2),
+                                     matrixKmnKnm,
+                                     vectorKmny,
+                                     activeSet,
+                                     optimalHyperparameters)
 
-    val model = new GaussianProcessRegressionModel(uid, magicVector, optimalKernel)
+    val model =
+      new GaussianProcessRegressionModel(uid, magicVector, optimalKernel)
     instr.logSuccess(model)
     model
   }
@@ -133,8 +174,9 @@ class GaussianProcessRegression(override val uid: String)
     }
   }
 
-  private def optimizeHyperparameters(expertLabelsAndKernels: RDD[(BDV[Double], Kernel)],
-                                      sigma2: Double) = {
+  private def optimizeHyperparameters(
+      expertLabelsAndKernels: RDD[(BDV[Double], Kernel)],
+      sigma2: Double) = {
     val f = new DiffFunction[BDV[Double]] with Serializable {
       private val cache = mutable.HashMap[BDV[Double], (Double, BDV[Double])]()
 
@@ -143,24 +185,31 @@ class GaussianProcessRegression(override val uid: String)
       }
 
       private def calculateNoMemory(x: BDV[Double]): (Double, BDV[Double]) = {
-        expertLabelsAndKernels.treeAggregate((0d, BDV.zeros[Double](x.length)))({ case (u, (y, k)) =>
-          k.setHyperparameters(x)
-          val (likelihood, gradient) = likelihoodAndGradient(y, k, sigma2)
-          (u._1 + likelihood, u._2 += gradient)
-        }, { case (u, v) =>
-          (u._1 + v._1, u._2 += v._2)
-        })
+        expertLabelsAndKernels.treeAggregate((0d, BDV.zeros[Double](x.length)))(
+          {
+            case (u, (y, k)) =>
+              k.setHyperparameters(x)
+              val (likelihood, gradient) = likelihoodAndGradient(y, k, sigma2)
+              (u._1 + likelihood, u._2 += gradient)
+          }, {
+            case (u, v) =>
+              (u._1 + v._1, u._2 += v._2)
+          }
+        )
       }
     }
 
     val x0 = $(kernel)().hyperparameters
     val (lower, upper) = $(kernel)().hyperparameterBoundaries
-    val solver = new LBFGSB(lower, upper, maxIter = $(maxIter), tolerance = $(tol))
+    val solver =
+      new LBFGSB(lower, upper, maxIter = $(maxIter), tolerance = $(tol))
 
     solver.minimize(f, x0)
   }
 
-  private def likelihoodAndGradient(y: BDV[Double], kernel : Kernel, sigma2: Double) = {
+  private def likelihoodAndGradient(y: BDV[Double],
+                                    kernel: Kernel,
+                                    sigma2: Double) = {
     val (k, derivative) = kernel.trainingKernelAndDerivative()
     regularizeMatrix(k, sigma2)
     val Kinv = inv(k)
@@ -170,42 +219,54 @@ class GaussianProcessRegression(override val uid: String)
     val alphaAlphaTMinusKinv = alpha * alpha.t
     alphaAlphaTMinusKinv -= Kinv
 
-    val gradient = derivative.map(derivative => -0.5 * traceOfProduct(alphaAlphaTMinusKinv, derivative))
-    (likelihood, BDV(gradient:_*))
+    val gradient = derivative.map(derivative =>
+      -0.5 * traceOfProduct(alphaAlphaTMinusKinv, derivative))
+    (likelihood, BDV(gradient: _*))
   }
 
-  private def traceOfProduct(a: BDM[Double], b: BDM[Double]) = BDV(a.data).t * BDV(b.data)
+  private def traceOfProduct(a: BDM[Double], b: BDM[Double]) =
+    BDV(a.data).t * BDV(b.data)
 
   private def groupForExperts(points: RDD[LabeledPoint]) = {
-    val numberOfExperts = Math.round(points.count().toDouble / $(datasetSizeForExpert))
-    points.zipWithIndex.map { case(instance, index) =>
-      (index % numberOfExperts, instance)
-    }.groupByKey().map(_._2)
+    val numberOfExperts =
+      Math.round(points.count().toDouble / $(datasetSizeForExpert))
+    points.zipWithIndex
+      .map {
+        case (instance, index) =>
+          (index % numberOfExperts, instance)
+      }
+      .groupByKey()
+      .map(_._2)
   }
 
-  override def copy(extra: ParamMap): GaussianProcessRegression = defaultCopy(extra)
+  override def copy(extra: ParamMap): GaussianProcessRegression =
+    defaultCopy(extra)
 }
 
-class GaussianProcessRegressionModel private[regression](override val uid: String,
-                                                         val magicVector: BDV[Double],
-                                                         val kernel: Kernel)
-  extends RegressionModel[Vector, GaussianProcessRegressionModel] {
+class GaussianProcessRegressionModel private[regression] (
+    override val uid: String,
+    val magicVector: BDV[Double],
+    val kernel: Kernel)
+    extends RegressionModel[Vector, GaussianProcessRegressionModel] {
 
   override protected def predict(features: Vector): Double = {
     kernel.crossKernel(features) * magicVector
   }
 
   override def copy(extra: ParamMap): GaussianProcessRegressionModel = {
-    val newModel = copyValues(new GaussianProcessRegressionModel(uid,
-      magicVector, kernel), extra)
+    val newModel = copyValues(
+      new GaussianProcessRegressionModel(uid, magicVector, kernel),
+      extra)
     newModel.setParent(parent)
   }
 }
 
 trait GaussianProcessRegressionHelper {
-  class NotPositiveDefiniteException extends Exception("Some matrix which is supposed to be " +
-    "positive definite is not. This probably happened due to `sigma2` parameter being too small." +
-    " Try to gradually increase it.")
+  class NotPositiveDefiniteException
+      extends Exception(
+        "Some matrix which is supposed to be " +
+          "positive definite is not. This probably happened due to `sigma2` parameter being too small." +
+          " Try to gradually increase it.")
 
   /**
     * Does some matrix multiplications in a distributed manner.
@@ -214,22 +275,28 @@ trait GaussianProcessRegressionHelper {
     * @param activeSet
     * @return (K_mn * K_nm, K_mn * y)
     */
-  def getMatrixKmnKnmAndVectorKmny(expertLabelsAndKernels: RDD[(BDV[Double], Kernel)],
-                                   activeSet: Array[Vector]): (BDM[Double], BDV[Double]) = {
+  def getMatrixKmnKnmAndVectorKmny(
+      expertLabelsAndKernels: RDD[(BDV[Double], Kernel)],
+      activeSet: Array[Vector]): (BDM[Double], BDV[Double]) = {
     val activeSetSize = activeSet.length
     val activeSetBC = expertLabelsAndKernels.sparkContext.broadcast(activeSet)
 
-    expertLabelsAndKernels.treeAggregate(BDM.zeros[Double](activeSetSize, activeSetSize),
-      BDV.zeros[Double](activeSetSize))({ case (u, (y, k)) =>
-      val kernelMatrix = k.crossKernel(activeSetBC.value)
-      u._1 += kernelMatrix * kernelMatrix.t
-      u._2 += kernelMatrix * y
-      u
-    }, { case (u, v) =>
-      u._1 += v._1
-      u._2 += v._2
-      u
-    })
+    expertLabelsAndKernels.treeAggregate(
+      BDM.zeros[Double](activeSetSize, activeSetSize),
+      BDV.zeros[Double](activeSetSize))(
+      {
+        case (u, (y, k)) =>
+          val kernelMatrix = k.crossKernel(activeSetBC.value)
+          u._1 += kernelMatrix * kernelMatrix.t
+          u._2 += kernelMatrix * y
+          u
+      }, {
+        case (u, v) =>
+          u._1 += v._1
+          u._2 += v._2
+          u
+      }
+    )
   }
 
   /**
@@ -253,12 +320,13 @@ trait GaussianProcessRegressionHelper {
     val Kmm = kernel.trainingKernel()
     regularizeMatrix(Kmm, sigma2)
 
-    val positiveDefiniteMatrix = sigma2 * Kmm + matrixKmnKnm  // sigma^2 K_mm + K_mn * K_nm
+    val positiveDefiniteMatrix = sigma2 * Kmm + matrixKmnKnm // sigma^2 K_mm + K_mn * K_nm
     assertSymPositiveDefinite(positiveDefiniteMatrix)
     positiveDefiniteMatrix \ vectorKmny
   }
 
-  protected def regularizeMatrix(matrix : BDM[Double], regularization: Double) : Unit = {
+  protected def regularizeMatrix(matrix: BDM[Double],
+                                 regularization: Double): Unit = {
     for (i <- 0 until matrix.cols) matrix(i, i) += regularization
   }
 
