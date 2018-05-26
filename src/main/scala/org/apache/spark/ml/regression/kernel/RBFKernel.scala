@@ -17,7 +17,7 @@ class RBFKernel(sigma: Double,
     extends Kernel {
   override var hyperparameters: BDV[Double] = BDV[Double](sigma)
 
-  private def getSigma() = hyperparameters(0)
+  private def getSigma: Double = hyperparameters(0)
 
   private var squaredDistances: Option[BDM[Double]] = None
 
@@ -52,7 +52,7 @@ class RBFKernel(sigma: Double,
   override def trainingKernel(): BDM[Double] = {
     val result = squaredDistances.getOrElse(
       throw new TrainingVectorsNotInitializedException) / (-2d * sqr(
-      getSigma()))
+      getSigma))
     exp.inPlace(result)
     result
   }
@@ -64,7 +64,7 @@ class RBFKernel(sigma: Double,
 
     val kernel = trainingKernel()
     val derivative = sqd *:* kernel
-    derivative /= cube(getSigma())
+    derivative /= cube(getSigma)
 
     (kernel, Array(derivative))
   }
@@ -79,7 +79,7 @@ class RBFKernel(sigma: Double,
       var j = 0
       while (j < train.length) {
         result(i, j) = Vectors.sqdist(test(i), train(j)) / (-2d * sqr(
-          getSigma()))
+          getSigma))
         j += 1
       }
       i += 1

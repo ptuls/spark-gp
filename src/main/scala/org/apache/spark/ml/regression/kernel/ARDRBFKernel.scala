@@ -73,14 +73,18 @@ class ARDRBFKernel(override var hyperparameters: BDV[Double],
     val result = Array.fill[BDM[Double]](hyperparameters.length)(
       BDM.zeros[Double](train.length, train.length))
 
-    for (i <- train.indices; j <- 0 to i) {
-      val diff = train(i).asBreeze - train(j).asBreeze
-      diff :*= diff
-      diff :*= hyperparameters
-      val betaXi_Xj = diff
-      for (k <- 0 until hyperparameters.length) {
-        result(k)(i, j) = betaXi_Xj(k)
-        result(k)(j, i) = betaXi_Xj(k)
+    var i = 0
+    while (i < train.length) {
+      var j = 0
+      while (j <= i) {
+        val diff = train(i).asBreeze - train(j).asBreeze
+        diff :*= diff
+        diff :*= hyperparameters
+        val betaXi_Xj = diff
+        for (k <- 0 until hyperparameters.length) {
+          result(k)(i, j) = betaXi_Xj(k)
+          result(k)(j, i) = betaXi_Xj(k)
+        }
       }
     }
 
