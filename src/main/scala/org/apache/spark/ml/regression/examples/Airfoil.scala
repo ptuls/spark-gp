@@ -7,13 +7,15 @@ import org.apache.spark.ml.linalg.Vectors
 import org.apache.spark.ml.regression.GaussianProcessRegression
 import org.apache.spark.ml.regression.kernel.ARDRBFKernel
 import org.apache.spark.rdd.RDD
+import com.typesafe.scalalogging._
 
 
-object Airfoil extends App with GPExample {
+object Airfoil extends App with GPExample with LazyLogging {
   import spark.sqlContext.implicits._
 
   override def name = "Airfoil"
 
+  logger.info("Reading data")
   val airfoil = readSCV("data/airfoil.csv")
 
   val scaled = scale(airfoil).toDF
@@ -23,7 +25,9 @@ object Airfoil extends App with GPExample {
     .setSigma2(1e-4)
     .setKernel(() => new ARDRBFKernel(5))
 
+  logger.info("Fitting")
   cv(gp, scaled, 2.8)
+  logger.info("Done")
 
   def readSCV(path : String) = {
     spark.read.format("csv").load(path).rdd.map(row => {
