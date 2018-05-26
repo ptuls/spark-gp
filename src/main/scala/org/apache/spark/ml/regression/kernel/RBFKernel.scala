@@ -32,10 +32,17 @@ class RBFKernel(sigma: Double,
   override def setTrainingVectors(vectors: Array[Vector]): this.type = {
     trainOption = Some(vectors)
     val sqd = BDM.zeros[Double](vectors.length, vectors.length)
-    for (i <- vectors.indices; j <- 0 to i) {
-      val dist = Vectors.sqdist(vectors(i), vectors(j))
-      sqd(i, j) = dist
-      sqd(j, i) = dist
+
+    var i = 0
+    while (i < vectors.length) {
+      var j = 0
+      while (j <= i) {
+        val dist = Vectors.sqdist(vectors(i), vectors(j))
+        sqd(i, j) = dist
+        sqd(j, i) = dist
+        j += 1
+      }
+      i += 1
     }
 
     squaredDistances = Some(sqd)
@@ -67,8 +74,16 @@ class RBFKernel(sigma: Double,
       trainOption.getOrElse(throw new TrainingVectorsNotInitializedException)
     val result = BDM.zeros[Double](test.length, train.length)
 
-    for (i <- test.indices; j <- train.indices)
-      result(i, j) = Vectors.sqdist(test(i), train(j)) / (-2d * sqr(getSigma()))
+    var i = 0
+    while (i < test.length) {
+      var j = 0
+      while (j < train.length) {
+        result(i, j) = Vectors.sqdist(test(i), train(j)) / (-2d * sqr(
+          getSigma()))
+        j += 1
+      }
+      i += 1
+    }
 
     exp.inPlace(result)
 

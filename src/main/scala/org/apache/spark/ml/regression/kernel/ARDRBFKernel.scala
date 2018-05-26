@@ -48,10 +48,17 @@ class ARDRBFKernel(override var hyperparameters: BDV[Double],
       trainOption.getOrElse(throw new TrainingVectorsNotInitializedException)
 
     val result = BDM.zeros[Double](train.length, train.length)
-    for (i <- train.indices; j <- 0 to i) {
-      val k = kernelElement(train(i).asBreeze, train(j).asBreeze)
-      result(i, j) = k
-      result(j, i) = k
+
+    var i = 0
+    while (i < train.length) {
+      var j = 0
+      while (j <= i) {
+        val k = kernelElement(train(i).asBreeze, train(j).asBreeze)
+        result(i, j) = k
+        result(j, i) = k
+        j += 1
+      }
+      i += 1
     }
 
     result
