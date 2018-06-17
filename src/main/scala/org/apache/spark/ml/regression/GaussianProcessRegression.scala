@@ -209,7 +209,7 @@ class GaussianProcessRegression(override val uid: String)
 
   private def likelihoodAndGradient(y: BDV[Double],
                                     kernel: Kernel,
-                                    sigma2: Double) = {
+                                    sigma2: Double): (Double, BDV[Double]) = {
     val (k, derivative) = kernel.trainingKernelAndDerivative()
     regularizeMatrix(k, sigma2)
     val Kinv = inv(k)
@@ -249,8 +249,14 @@ class GaussianProcessRegressionModel private[regression] (
     val kernel: Kernel)
     extends RegressionModel[Vector, GaussianProcessRegressionModel] {
 
-  override protected def predict(features: Vector): Double = {
+  override def predict(features: Vector): Double = {
     kernel.crossKernel(features) * magicVector
+  }
+
+  def predictWithStdDev(features: Vector): Array[Double] = {
+    val mean = predict(features)
+    val stdDev = kernel.crossKernel(features) * magicVector
+    Array(mean, stdDev)
   }
 
   override def copy(extra: ParamMap): GaussianProcessRegressionModel = {
@@ -316,7 +322,7 @@ trait GaussianProcessRegressionHelper {
                      matrixKmnKnm: BDM[Double],
                      vectorKmny: BDV[Double],
                      activeSet: Array[Vector],
-                     optimalHyperparameter: BDV[Double]) = {
+                     optimalHyperparameter: BDV[Double]): BDV[Double] = {
     val Kmm = kernel.trainingKernel()
     regularizeMatrix(Kmm, sigma2)
 
@@ -327,7 +333,11 @@ trait GaussianProcessRegressionHelper {
 
   protected def regularizeMatrix(matrix: BDM[Double],
                                  regularization: Double): Unit = {
-    for (i <- 0 until matrix.cols) matrix(i, i) += regularization
+    var i = 0
+    while (i < matrix.cols) {
+      matrix(i, i) += regularization
+      i += 1
+    }
   }
 
   protected def assertSymPositiveDefinite(matrix: BDM[Double]): Unit = {

@@ -2,24 +2,18 @@ package org.apache.spark.ml.regression.kernel
 
 import breeze.linalg.{DenseMatrix => BDM, DenseVector => BDV, Vector => BV}
 import breeze.numerics._
-import org.apache.spark.ml.linalg.{Vector, Vectors}
+import org.apache.spark.ml.linalg.Vector
 
-/**
-  * Implements traditional RBF kernel `k(x_i, k_j) = exp(||x_i - x_j||^2 / sigma^2)`
-  *
-  * @param sigma
-  * @param lower
-  * @param upper
-  */
-class RBFKernel(sigma: Double,
-                private val lower: Double = 1e-6,
-                private val upper: Double = inf)
+class DotProductKernel(sigma: Double,
+                       private val lower: Double = 1e-6,
+                       private val upper: Double = inf)
     extends Kernel {
+
   override var hyperparameters: BDV[Double] = BDV[Double](sigma)
 
   private def getSigma: Double = hyperparameters(0)
 
-  private var squaredDistances: Option[BDM[Double]] = None
+  private var dotProducts: Option[BDM[Double]] = None
 
   var trainOption: Option[Array[Vector]] = None
 
@@ -37,33 +31,27 @@ class RBFKernel(sigma: Double,
     while (i < vectors.length) {
       var j = 0
       while (j <= i) {
-        val dist = Vectors.sqdist(vectors(i), vectors(j))
-        sqd(i, j) = dist
-        sqd(j, i) = dist
+        val product = vectors(i).asBreeze dot vectors(j).asBreeze + getSigma
+        sqd(i, j) = product
+        sqd(j, i) = product
         j += 1
       }
       i += 1
     }
 
-    squaredDistances = Some(sqd)
+    dotProducts = Some(sqd)
     this
   }
 
   override def trainingKernel(): BDM[Double] = {
-    val result = squaredDistances.getOrElse(
-      throw new TrainingVectorsNotInitializedException) / (-2d * sqr(getSigma))
-    exp.inPlace(result)
-    result
+    dotProducts.getOrElse(throw new TrainingVectorsNotInitializedException)
   }
 
+  // Note: derivative with respect to sigma
   override def trainingKernelAndDerivative()
     : (BDM[Double], Array[BDM[Double]]) = {
-    val sqd = squaredDistances.getOrElse(
-      throw new TrainingVectorsNotInitializedException)
-
     val kernel = trainingKernel()
-    val derivative = sqd *:* kernel
-    derivative /= cube(getSigma)
+    val derivative = 2 * sqrt(getSigma) * BDM.ones(kernel.rows, kernel.cols)
 
     (kernel, Array(derivative))
   }
@@ -77,7 +65,7 @@ class RBFKernel(sigma: Double,
     while (i < test.length) {
       var j = 0
       while (j < train.length) {
-        result(i, j) = Vectors.sqdist(test(i), train(j)) / (-2d * sqr(getSigma))
+        result(i, j) = test(i).asBreeze dot train(j).asBreeze + getSigma
         j += 1
       }
       i += 1
@@ -93,8 +81,4 @@ class RBFKernel(sigma: Double,
       .getOrElse(throw new TrainingVectorsNotInitializedException)
       .map(_ => 1d)
   }
-
-  private def sqr(x: Double) = x * x
-
-  private def cube(x: Double) = x * x * x
 }
