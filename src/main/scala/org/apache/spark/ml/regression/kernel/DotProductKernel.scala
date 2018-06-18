@@ -25,21 +25,21 @@ class DotProductKernel(sigma: Double,
 
   override def setTrainingVectors(vectors: Array[Vector]): this.type = {
     trainOption = Some(vectors)
-    val sqd = BDM.zeros[Double](vectors.length, vectors.length)
+    val products = BDM.zeros[Double](vectors.length, vectors.length)
 
     var i = 0
     while (i < vectors.length) {
       var j = 0
       while (j <= i) {
-        val product = vectors(i).asBreeze dot vectors(j).asBreeze + getSigma
-        sqd(i, j) = product
-        sqd(j, i) = product
+        val product = (vectors(i).asBreeze dot vectors(j).asBreeze) + getSigma * getSigma
+        products(i, j) = product
+        products(j, i) = product
         j += 1
       }
       i += 1
     }
 
-    dotProducts = Some(sqd)
+    dotProducts = Some(products)
     this
   }
 
@@ -51,7 +51,7 @@ class DotProductKernel(sigma: Double,
   override def trainingKernelAndDerivative()
     : (BDM[Double], Array[BDM[Double]]) = {
     val kernel = trainingKernel()
-    val derivative = 2 * sqrt(getSigma) * BDM.ones(kernel.rows, kernel.cols)
+    val derivative = 2 * getSigma * BDM.ones[Double](kernel.rows, kernel.cols)
 
     (kernel, Array(derivative))
   }

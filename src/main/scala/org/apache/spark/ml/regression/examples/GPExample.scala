@@ -6,15 +6,18 @@ import org.apache.spark.ml.tuning.{CrossValidator, ParamGridBuilder}
 import org.apache.spark.sql.{DataFrame, SparkSession}
 
 trait GPExample {
-  def name : String
+  def name: String
 
-  val spark = SparkSession.builder().appName(name).master("local[4]").getOrCreate()
+  val spark =
+    SparkSession.builder().appName(name).master("local[4]").getOrCreate()
 
   /*
    * It takes `gp`, runs 10-fold cross-validation on `instances` and returns the rmse
    * if it's below `expectedRMSE`. Exception is generated otherwise.
    */
-  def cv(gp: GaussianProcessRegression, instances: DataFrame, expectedRMSE: Double) = {
+  def cv(gp: GaussianProcessRegression,
+         instances: DataFrame,
+         expectedRMSE: Double) = {
     val cv = new CrossValidator()
       .setEstimator(gp)
       .setEvaluator(new RegressionEvaluator())
